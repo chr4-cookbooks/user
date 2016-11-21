@@ -27,8 +27,7 @@ def whyrun_supported?
 end
 
 def load_current_resource
-  @my_home = new_resource.home ||
-    "#{node['user']['home_root']}/#{new_resource.username}"
+  @my_home = user_home
   @my_shell = new_resource.shell || node['user']['default_shell']
   @manage_home = bool(new_resource.manage_home, node['user']['manage_home'])
   @non_unique = bool(new_resource.non_unique, node['user']['non_unique'])
@@ -43,6 +42,7 @@ action :create do # ~FC017: LWRP does not notify when updated
   authorized_keys_resource  :create
   keygen_resource           :create
   group_resource            :create
+  keypair_resource          :create
 end
 
 action :remove do # ~FC017: LWRP does not notify when updated
@@ -56,6 +56,7 @@ action :modify do # ~FC017: LWRP does not notify when updated
   home_dir_resource         :create
   authorized_keys_resource  :create
   keygen_resource           :create
+  keypair_resource          :create
 end
 
 action :manage do # ~FC017: LWRP does not notify when updated
@@ -63,6 +64,7 @@ action :manage do # ~FC017: LWRP does not notify when updated
   home_dir_resource         :create
   authorized_keys_resource  :create
   keygen_resource           :create
+  keypair_resource          :create
 end
 
 action :lock do # ~FC017: LWRP does not notify when updated
@@ -70,6 +72,7 @@ action :lock do # ~FC017: LWRP does not notify when updated
   home_dir_resource         :create
   authorized_keys_resource  :create
   keygen_resource           :create
+  keypair_resource          :create
 end
 
 action :unlock do # ~FC017: LWRP does not notify when updated
@@ -77,6 +80,7 @@ action :unlock do # ~FC017: LWRP does not notify when updated
   home_dir_resource         :create
   authorized_keys_resource  :create
   keygen_resource           :create
+  keypair_resource          :create
 end
 
 private
@@ -103,6 +107,15 @@ def user_gid
 rescue ArgumentError
   nil
 end
+
+def user_home
+  # this check is needed as the new user won't exit yet
+  # in why_run mode, causing an uncaught ArgumentError exception
+  new_resource.home || Etc.getpwnam(new_resource.username).dir
+rescue ArgumentError
+  nil
+end
+
 
 def user_resource(exec_action)
   # avoid variable scoping issues in resource block
@@ -252,5 +265,26 @@ def group_resource(exec_action)
           end
       r.run_action(:create) unless exec_action == :delete
       new_resource.updated_by_last_action(true) if r.updated_by_last_action?
+  end
+end
+
+def keypair_resource(exec_action)
+  new_resource.ssh_keypair.each do |name, key|
+    # avoid variable scoping issues in resource block
+    key_name, key_content = name, key
+
+    home = user_home
+    resource_gid = user_gid
+    r = file ::File.join(home, '.ssh', name) do
+      content   key_content + "\n"
+      owner     new_resource.username
+      group     resource_gid
+      mode      '0600' unless key_name =~ /.pub$/
+      sensitive true
+      action    :nothing
+    end
+
+    r.run_action(exec_action)
+    new_resource.updated_by_last_action(true) if r.updated_by_last_action?
   end
 end
